@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Brawl Web Game</title>
+
+<style>
+html,body{margin:0;padding:0;overflow:hidden;background:black}
+canvas{display:block}
+
+/* 조이스틱 */
+#joystick{
+  position:fixed;left:20px;bottom:120px;
+  width:120px;height:120px;border-radius:50%;
+  background:rgba(255,255,255,.15);
+  border:2px solid rgba(255,255,255,.4);
+  touch-action:none;
+}
+#stick{
+  position:absolute;left:40px;top:40px;
+  width:40px;height:40px;border-radius:50%;
+  background:white;
+}
+
+/* 버튼 */
+button{
+  position:fixed;width:70px;height:70px;
+  border-radius:50%;border:none;font-size:30px;
+  opacity:.85;z-index:10
+}
+#atkBtn{left:20px;bottom:20px;background:crimson;color:white}
+#ultBtn{right:20px;bottom:20px;background:orange}
+button:disabled{opacity:.3}
+</style>
+</head>
+
+<body>
+<canvas id="game"></canvas>
+
+<div id="joystick"><div id="stick"></div></div>
+<button id="atkBtn">👊</button>
+<button id="ultBtn">💥</button>
+
+<audio id="bgm" src="bgm_battle.mp3" loop></audio>
+
+<script>
+/* ===== 기본 ===== */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+function resize(){
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+}
+addEventListener("resize", resize);
+resize();
+
+/* 이미지 */
+const bgImg = new Image();
+bgImg.src = "background.jpg";
+const playerImg = new Image();
+playerImg.src = "player.jpg";
+
+/* 오디오 (모바일 대응) */
+const bgm = document.getElementById("bgm");
+let audioStarted=false;
+document.body.addEventListener("touchstart",()=>{
+  if(!audioStarted){ bgm.play(); audioStarted=true; }
+},{once:true});
+
+/* 상태 */
+let gameState="play";
+
+/* 플레이어 */
+const player={
+  x:canvas.width/2,y:canvas.height*0.7,
+  r:20,speed:3,
+  hp:120,maxHp:120,
+  attackRange:35,attackDamage:12,
+  attackCooldown:0,
+  ultReady:true,ultCooldown:0,
+  hidden:false,revealTimer:0
+};
+
+/* AI */
+const AIs=[];
+for(let i=0;i<4;i++){
+  AIs.push({
+    x:Math.random()*canvas.width,
+    y:Math.random()*canvas.height*0.5,
+    r:18,speed:2,
+    hp:70,
+    team:i<2?"A":"B",
+    attackRange:30,attackDamage:10,
+    attackCooldown:0,
+    aimDX:0,aimDY:1,
+    hidden:false,revealTimer:0
+  });
+}
+
+/* 부쉬 */
+const bushes=[
+  {x:200,y:300,r:60},
+  {x:500,y:600,r:70},
+  {x:300,y:900,r:50}
+];
+
+function inBush(o){
+  for(const b of bushes){
+    const dx=o.x-b.x,dy=o.y-b.y;
+    if(dx*dx+dy*dy<b.r*b.r) return true;
+  }
+  return false;
+}
+
+/* 조이스틱 */
+const joystick=document.getElementById("joystick");
+const stick=document.getElementById("stick");
+let joyDX=0,joyDY=0,joyActive=false;
+let aimDX=0,aimDY=1;
+
+joystick.addEventListener("touchstart",()=>joyActive=true);
+joystick.addEventListener("touchmove",e=>{
+  if(!joyActive)return;
+  const r=joystick.getBoundingClientRect();
+  let x=e.touches[0].clientX-r.left-60;
+  let y=e.touches[0].clientY-r.top-60;
+  const d=Math.hypot(x,y);
+  if(d>40){x*=40/d;y*=40/d}
+  joyDX=x/40;joyDY=y/40;
+  aimDX=joyDX;aimDY=joyDY;
+  stick.style.left=(x+40)+"px";
+  stick.style.top=(y+40)+"px";
+});
+joystick.addEventListener("touchend",()=>{
+  joyDX=joyDY=0;joyActive=false;
+  stick.style.left="40px";stick.style.top="40px";
+});
+
+/* 버튼 */
+const atkBtn=document.getElementById("atkBtn");
+const ultBtn=document.getElementById("ultBtn");
+
+atkBtn.onclick=()=>{
+  if(player.attackCooldown>0||gameState!=="play")return;
+  player.revealTimer=60;
+  for(const ai of AIs){
+    if(ai.hp<=0)continue;
+    const dx=ai.x-player.x,dy=ai.y-player.y;
+    const d=Math.hypot(dx,dy);
+    if(d<player.attackRange+ai.r){
+      const dot=(dx/d)*aimDX+(dy/d)*aimDY;
+      if(dot>0.5) ai.hp-=player.attackDamage;
+    }
+  }
+  player.attackCooldown=25;
+};
+
+ultBtn.onclick=()=>{
+  if(!player.ultReady)return;
+  player.revealTimer=60;
+  for(const ai of AIs){
+    const d=Math.hypot(ai.x-player.x,ai.y-player.y);
+    if(d<90) ai.hp-=35;
+  }
+  player.ultReady=false;
+  player.ultCooldown=300;
+};
+
+/* AI 업데이트 */
+function updateAI(ai){
+  if(ai.hp<=0)return;
+
+  let target=player,min=99999;
+  for(const o of AIs){
+    if(o!==ai&&o.team!==ai.team&&o.hp>0){
+      const d=Math.hypot(o.x-ai.x,o.y-ai.y);
+      if(d<min){min=d;target=o;}
+    }
+  }
+
+  const dx=target.x-ai.x,dy=target.y-ai.y;
+  const dist=Math.hypot(dx,dy)||1;
+  ai.aimDX=dx/dist;ai.aimDY=dy/dist;
+
+  if(dist>ai.attackRange){
+    ai.x+=ai.aimDX*ai.speed;
+    ai.y+=ai.aimDY*ai.speed;
+  }
+
+  if(dist<ai.attackRange+target.r && ai.attackCooldown<=0){
+    target.hp-=ai.attackDamage;
+    ai.attackCooldown=30;
+    ai.revealTimer=60;
+  }
+  if(ai.attackCooldown>0)ai.attackCooldown--;
+
+  ai.hidden = inBush(ai)&&ai.revealTimer<=0;
+  if(ai.revealTimer>0)ai.revealTimer--;
+}
+
+/* 게임 루프 */
+function loop(){
+  if(bgImg.complete)
+    ctx.drawImage(bgImg,0,0,canvas.width,canvas.height);
+
+  // 부쉬
+  for(const b of bushes){
+    ctx.fillStyle="rgba(0,150,0,.6)";
+    ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();
+  }
+
+  // 플레이어 이동
+  player.x+=joyDX*player.speed;
+  player.y+=joyDY*player.speed;
+
+  player.hidden=inBush(player)&&player.revealTimer<=0;
+  if(player.revealTimer>0)player.revealTimer--;
+  if(player.attackCooldown>0)player.attackCooldown--;
+  if(!player.ultReady){
+    player.ultCooldown--;
+    if(player.ultCooldown<=0)player.ultReady=true;
+  }
+
+  // AI
+  for(const ai of AIs)updateAI(ai);
+
+  // 플레이어
+  ctx.globalAlpha=player.hidden?0.3:1;
+  ctx.drawImage(playerImg,player.x-25,player.y-25,50,50);
+  ctx.globalAlpha=1;
+
+  // 체력바
+  ctx.fillStyle="red";
+  ctx.fillRect(player.x-25,player.y-35,50*(player.hp/player.maxHp),5);
+
+  // AI 그리기
+  for(const ai of AIs){
+    if(ai.hp<=0)continue;
+    ctx.globalAlpha=ai.hidden?0.3:1;
+    ctx.fillStyle=ai.team==="A"?"blue":"orange";
+    ctx.beginPath();ctx.arc(ai.x,ai.y,ai.r,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
